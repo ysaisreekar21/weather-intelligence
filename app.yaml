@@ -4,4 +4,4 @@ command:
 
 env:
   - name: ENDPOINT_NAME
-    valueFrom: database
+    valueFrom: postgres

@@ -247,3 +247,16 @@ GROUP BY model_name;
 print(cur.fetchall())
 
 cur.close()
+
+# COMMAND ----------
+
+GRANT USAGE ON SCHEMA public
+TO "18a23a65-c311-49b8-90c5-e9ecfd1d8d4b";
+
+GRANT SELECT, INSERT, UPDATE
+ON TABLE public.weather_documents
+TO "18a23a65-c311-49b8-90c5-e9ecfd1d8d4b";
+
+GRANT SELECT, INSERT, UPDATE
+ON TABLE public.weather_embeddings
+TO "18a23a65-c311-49b8-90c5-e9ecfd1d8d4b";
