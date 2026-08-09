@@ -1,8 +1,30 @@
-"""Setup script to create weather_embeddings table with pgvector in Lakebase.
+"""Setup script to create weather_documents and weather_embeddings tables in Lakebase.
 
-Run this once to initialize the embeddings schema with vector support.
+Run this once to initialize the database schema.
 """
+
 import lakebase
+
+# SQL DDL for weather_documents table
+CREATE_DOCUMENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS weather_documents (
+    id VARCHAR(255) PRIMARY KEY,
+    location VARCHAR(500) NOT NULL,
+    source_type VARCHAR(50) NOT NULL,
+    headline TEXT,
+    narrative_text TEXT,
+    issued_at TIMESTAMP,
+    effective_at TIMESTAMP,
+    payload JSONB,
+    synced_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_weather_location ON weather_documents(location);
+CREATE INDEX IF NOT EXISTS idx_weather_source_type ON weather_documents(source_type);
+CREATE INDEX IF NOT EXISTS idx_weather_synced_at ON weather_documents(synced_at);
+"""
 
 # SQL DDL for pgvector extension and weather_embeddings table
 CREATE_EMBEDDINGS_TABLE_SQL = """
@@ -39,9 +61,34 @@ CREATE INDEX IF NOT EXISTS idx_weather_embeddings_created_at
 """
 
 
-def create_embeddings_table():
+def create_weather_documents_table():
+    """Create the weather_documents table and indexes."""
+    print("Creating weather_documents table...")
+    
+    try:
+        lakebase.run_write(CREATE_DOCUMENTS_TABLE_SQL)
+        print("✅ Successfully created weather_documents table and indexes")
+        
+        # Verify table exists
+        result = lakebase.run_query("""
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = 'weather_documents'
+            ORDER BY ordinal_position
+        """)
+        
+        print(f"\nTable schema ({len(result)} columns):")
+        for row in result:
+            print(f"  - {row['column_name']}: {row['data_type']}")
+            
+    except Exception as e:
+        print(f"❌ Error creating weather_documents table: {str(e)}")
+        raise
+
+
+def create_weather_embeddings_table():
     """Create the weather_embeddings table with pgvector support."""
-    print("Creating weather_embeddings table with pgvector...")
+    print("\nCreating weather_embeddings table with pgvector...")
     
     try:
         # Execute DDL statements
@@ -89,9 +136,22 @@ def create_embeddings_table():
             print("\n⚠️  Warning: HNSW index not found")
             
     except Exception as e:
-        print(f"❌ Error creating embeddings table: {str(e)}")
+        print(f"❌ Error creating weather_embeddings table: {str(e)}")
         raise
 
 
 if __name__ == "__main__":
-    create_embeddings_table()
+    print("Setting up Weather Intelligence database tables...\n")
+    print("=" * 60)
+    
+    # Create tables in order (documents first, then embeddings)
+    create_weather_documents_table()
+    create_weather_embeddings_table()
+    
+    print("\n" + "=" * 60)
+    print("✅ Database setup complete!")
+    print("\nNext steps:")
+    print("  1. Run: python app.py (start the Flask API)")
+    print("  2. POST to /weather/sync to fetch weather data")
+    print("  3. Run: python ingest_weather_embeddings.py (generate embeddings)")
+    print("  4. POST to /weather/search for semantic search")
