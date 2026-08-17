@@ -1189,9 +1189,9 @@ def admin_embedding_test():
         
         # Step 1: Ensure weather_embeddings table exists
         try:
-            from setup_weather_embeddings import create_embeddings_table
+            from setup_weather_table import create_weather_embeddings_table
             logger.info("Setting up weather_embeddings table...")
-            create_embeddings_table()
+            create_weather_embeddings_table()
         except Exception as setup_err:
             logger.error(f"Setup error: {setup_err}")
             return jsonify({
