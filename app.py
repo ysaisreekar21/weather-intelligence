@@ -1020,48 +1020,46 @@ def insert_embeddings_batch(document_id, chunks_with_embeddings):
     return inserted
 
 
+
 @app.route("/weather/embed", methods=["POST"])
 def weather_embed():
-    """Generate and store embeddings for weather documents.
-    
-    This endpoint processes unembedded documents in batches, chunks the text,
-    generates embeddings, and stores them in weather_embeddings.
-    
-    Optional request body:
-        {
-            "batch_size": 50  (max documents to process, default 50)
-        }
-    
-    Returns:
-        {
-            "status": "success",
-            "documents_processed": int,
-            "chunks_created": int,
-            "embeddings_inserted": int
-        }
-    """
+    """Generate embeddings for unembedded weather documents."""
     try:
-        # Parse batch_size parameter
         batch_size = DOCUMENT_BATCH_SIZE
+
         if request.is_json:
             data = request.get_json()
             if "batch_size" in data:
                 batch_size = data["batch_size"]
+
                 if not isinstance(batch_size, int) or batch_size <= 0:
                     return jsonify({
                         "status": "error",
                         "error": "batch_size must be a positive integer"
                     }), 400
-                # Cap at reasonable limit
+
                 batch_size = min(batch_size, 200)
-        
-        logger.info(f"Starting embedding generation for up to {batch_size} documents")
-        
-        # Get unembedded documents
-        # Note: Table setup (CREATE TABLE, CREATE INDEX) should be done during initial
-        # deployment, not on every request. The endpoint only needs INSERT/SELECT permissions.
-        documents = get_unembedded_documents(batch_size)
-        
+
+        # Use the same ingestion functions that the working
+        # admin embedding endpoint uses.
+        from ingest_weather_embeddings import (
+            get_unembedded_documents,
+            process_document,
+            MODEL_NAME,
+            EMBEDDING_DIM
+        )
+        from sentence_transformers import SentenceTransformer
+
+        logger.info(
+            f"/weather/embed: looking for up to {batch_size} unembedded documents"
+        )
+
+        documents = get_unembedded_documents(limit=batch_size)
+
+        logger.info(
+            f"/weather/embed: found {len(documents)} documents"
+        )
+
         if not documents:
             return jsonify({
                 "status": "success",
@@ -1070,72 +1068,55 @@ def weather_embed():
                 "chunks_created": 0,
                 "embeddings_inserted": 0
             })
-        
-        logger.info(f"Found {len(documents)} unembedded documents")
-        
-        # Process documents
+
+        # Use the exact same model configuration as the
+        # already-working admin embedding endpoint.
+        model = SentenceTransformer(MODEL_NAME, device="cpu")
+
+        actual_dim = model.get_sentence_embedding_dimension()
+
+        if actual_dim != EMBEDDING_DIM:
+            return jsonify({
+                "status": "error",
+                "error": (
+                    f"Model dimension mismatch: "
+                    f"expected {EMBEDDING_DIM}, got {actual_dim}"
+                )
+            }), 500
+
         total_chunks = 0
-        total_embeddings = 0
         successful_docs = 0
-        
+        errors = []
+
         for doc in documents:
             try:
-                document_id = doc['id']
-                
-                # Combine headline and narrative text
-                text_parts = []
-                if doc.get('headline') and doc['headline']:
-                    text_parts.append(f"Headline: {doc['headline']}")
-                if doc.get('narrative_text') and doc['narrative_text']:
-                    text_parts.append(doc['narrative_text'])
-                
-                full_text = '\n\n'.join(text_parts)
-                
-                if not full_text.strip():
-                    logger.warning(f"Document {document_id} has no text, skipping")
-                    continue
-                
-                # Chunk the text
-                chunks = chunk_text(full_text)
-                
-                if not chunks:
-                    logger.warning(f"Document {document_id} produced no chunks, skipping")
-                    continue
-                
-                # Generate embeddings for all chunks
-                embeddings = embedding_model.encode(chunks, show_progress_bar=False)
-                
-                # Prepare chunks with embeddings
-                chunks_with_embeddings = [
-                    (idx, chunk, embedding.tolist())
-                    for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
-                ]
-                
-                # Insert into database
-                inserted = insert_embeddings_batch(document_id, chunks_with_embeddings)
-                
-                total_chunks += len(chunks)
-                total_embeddings += inserted
+                chunks_created = process_document(doc, model)
+
+                total_chunks += chunks_created
                 successful_docs += 1
-                
-                logger.info(f"Processed document {document_id}: {len(chunks)} chunks, {inserted} inserted")
-                
+
+                logger.info(
+                    f"/weather/embed: processed {doc['id']}: "
+                    f"{chunks_created} chunks"
+                )
+
             except Exception as doc_err:
-                logger.error(f"Error processing document {doc.get('id', 'unknown')}: {str(doc_err)}")
-                # Continue with next document
-                continue
-        
-        logger.info(f"Embedding generation complete: {successful_docs} docs, {total_chunks} chunks, {total_embeddings} inserted")
-        
+                error_msg = f"Document {doc['id']}: {str(doc_err)}"
+                errors.append(error_msg)
+                logger.exception(error_msg)
+
         return jsonify({
             "status": "success",
             "documents_processed": successful_docs,
             "chunks_created": total_chunks,
-            "embeddings_inserted": total_embeddings
+            "embeddings_inserted": total_chunks - len(errors),
+            "embedding_dimension": actual_dim,
+            "errors": errors
         })
-    
+
     except Exception as e:
-        logger.exception("Embedding generation failed")
+        logger.exception("/weather/embed failed")
+
         return jsonify({
             "status": "error",
             "error": str(e)
@@ -1191,7 +1172,7 @@ def admin_embedding_test():
         try:
             from setup_weather_tables import create_weather_embeddings_table
             logger.info("Setting up weather_embeddings table...")
-            create_weather_embeddings_table()
+           # create_weather_embeddings_table()
         except Exception as setup_err:
             logger.error(f"Setup error: {setup_err}")
             return jsonify({
